@@ -4,6 +4,10 @@
 #include "file_list.h"
 #include "minitar.h"
 
+int update_files_in_archive(const char *archive_name, const file_list_t *files) {
+    return 0;
+}
+
 int main(int argc, char **argv) {
     if (argc < 4) {
         printf("Usage: %s -c|a|t|u|x -f ARCHIVE [FILE...]\n", argv[0]);
@@ -62,6 +66,9 @@ int main(int argc, char **argv) {
             break;
         case 3:
             result = get_archive_file_list(archive_name, &files);
+            break;
+        case 4:
+            result = update_files_in_archive(archive_name, &files);
             break;
         case 5:
             result = extract_files_from_archive(archive_name);
