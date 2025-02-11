@@ -271,3 +271,7 @@ proj1-code/test_files/f19.txt
 proj1-code/test_results/project_01-13-5-results.tmp
 proj1-code/test_results/raw/project_01-13-5-actual.tmp
 proj1-code/test_results/raw/project_01-13-5-expected.tmp
+proj1-code/test_files/f7.bin
+proj1-code/test_results/project_01-15-5-results.tmp
+proj1-code/test_results/raw/project_01-15-5-actual.tmp
+proj1-code/test_results/raw/project_01-15-5-expected.tmp
