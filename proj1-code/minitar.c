@@ -224,11 +224,120 @@ int create_archive(const char *archive_name, const file_list_t *files) {
 
     close(archive_file);
     return 0;
-}
+  }
 
   int append_files_to_archive(const char *archive_name,
                               const file_list_t *files) {
-    // TODO: Not yet implemented
+    // Open arcieve in read/write mode
+    int archiveFile = open(archive_name, O_RDWR);
+    if (archiveFile < 0) {
+        perror("Error: Unable to open archive file");
+        return -1;
+    }
+
+    // Find where to append new files
+    off_t appendPointer = 0;
+    while (1) {
+        tar_header header;
+        ssize_t bytesRead = read(archiveFile, &header, sizeof(tar_header));
+
+        if (bytesRead < 0) {
+            perror("Error: Failed to read header block");
+            close(archiveFile);
+            return -1;
+        }
+        if (bytesRead == 0 || header.name[0] == '\0') {
+            break; // Found empty block (end of archive)
+        }
+
+        // Calculate padded file size
+        off_t fileSize = strtol(header.size, NULL, 8);
+        off_t paddedSize = ((fileSize + BLOCK_SIZE - 1) / BLOCK_SIZE) * BLOCK_SIZE;
+
+        // Skip past file data
+        if (lseek(archiveFile, paddedSize, SEEK_CUR) < 0) {
+            perror("Error: Failed to seek past file contents");
+            close(archiveFile);
+            return -1;
+        }
+
+        appendPointer = lseek(archiveFile, 0, SEEK_CUR);
+    }
+
+    // Seek to the position where new files will be appended
+    if (lseek(archiveFile, appendPointer, SEEK_SET) < 0) {
+        perror("Error: Failed to seek to append position");
+        close(archiveFile);
+        return -1;
+    }
+
+    // Append new files
+    node_t *current = files->head;
+    while (current != NULL) {
+        tar_header header;
+        if (fill_tar_header(&header, current->name) != 0) {
+            perror("Error: Failed to fill tar header");
+            close(archiveFile);
+            return -1;
+        }
+
+        // Write the header
+        if (write(archiveFile, &header, sizeof(tar_header)) != sizeof(tar_header)) {
+            perror("Error: Failed to write header to archive");
+            close(archiveFile);
+            return -1;
+        }
+
+        // Open the file to copy its content
+        int file_fd = open(current->name, O_RDONLY);
+        if (file_fd < 0) {
+            perror("Error: Failed to open file");
+            close(archiveFile);
+            return -1;
+        }
+
+        // Write the file content in blocks
+        char buffer[BLOCK_SIZE] = {0};
+        ssize_t bytesRead;
+        while ((bytesRead = read(file_fd, buffer, BLOCK_SIZE)) > 0) {
+            if (write(archiveFile, buffer, BLOCK_SIZE) != BLOCK_SIZE) {
+                perror("Error: Failed to write file contents to archive");
+                close(file_fd);
+                close(archiveFile);
+                return -1;
+            }
+            memset(buffer, 0, BLOCK_SIZE);
+        }
+
+        if (bytesRead < 0) {
+            perror("Error: Failed to read file");
+            close(file_fd);
+            close(archiveFile);
+            return -1;
+        }
+
+        close(file_fd);
+        current = current->next;
+    }
+
+    // Write trailing blocks at end of archieve
+    char empty_block[BLOCK_SIZE] = {0};
+    for (int i = 0; i < NUM_TRAILING_BLOCKS; i++) {
+        if (write(archiveFile, empty_block, BLOCK_SIZE) != BLOCK_SIZE) {
+            perror("Error: Failed to write trailing blocks");
+            close(archiveFile);
+            return -1;
+        }
+    }
+
+    // Trim excess trailing bytes
+    if (remove_trailing_bytes(archive_name, NUM_TRAILING_BLOCKS * BLOCK_SIZE) != 0) {
+        perror("Error: Failed to remove trailing bytes");
+        close(archiveFile);
+        return -1;
+    }
+
+    close(archiveFile);
     return 0;
   }
 
@@ -281,6 +390,77 @@ int create_archive(const char *archive_name, const file_list_t *files) {
   }
 
   int extract_files_from_archive(const char *archive_name) {
-    // TODO: Not yet implemented
+    // Open archive in read mode
+    int archiveFile = open(archive_name, O_RDONLY);
+    if (archiveFile < 0) {
+        perror("Error: Unable to open archive file");
+        return -1;
+    }
+
+    // Read through and extract the archive
+    while (1) {
+        tar_header header;
+        ssize_t bytesRead = read(archiveFile, &header, sizeof(tar_header));
+
+        if (bytesRead < 0) {
+            perror("Error: Failed to read header block");
+            close(archiveFile);
+            return -1;
+        }
+        if (bytesRead == 0 || header.name[0] == '\0') {
+            break;
+        }
+
+        // Calculate padded file size
+        off_t fileSize = strtol(header.size, NULL, 8);
+        off_t paddedSize = ((fileSize + BLOCK_SIZE - 1) / BLOCK_SIZE) * BLOCK_SIZE;
+
+        // Ensure valid file name
+        if (strchr(header.name, '/') != NULL) {
+            fprintf(stderr, "Error: Extraction of file with path not allowed: %s\n", header.name);
+            lseek(archiveFile, paddedSize, SEEK_CUR);
+            continue;
+        }
+
+        // Create and open the extracted file
+        int file_fd = open(header.name, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        if (file_fd < 0) {
+            perror("Error: Failed to create extracted file");
+            lseek(archiveFile, paddedSize, SEEK_CUR);
+            continue;
+        }
+
+        // Read file content and write it to the extracted file
+        char buffer[BLOCK_SIZE];
+        ssize_t totalBytesRead = 0;
+        while (totalBytesRead < fileSize) {
+            ssize_t chunkSize = read(archiveFile, buffer, BLOCK_SIZE);
+            if (chunkSize < 0) {
+                perror("Error: Failed to read file data");
+                close(file_fd);
+                close(archiveFile);
+                return -1;
+            }
+            ssize_t bytesToWrite = (chunkSize > (fileSize - totalBytesRead)) ? (fileSize - totalBytesRead) : chunkSize;
+            if (write(file_fd, buffer, bytesToWrite) != bytesToWrite) {
+                perror("Error: Failed to write extracted file");
+                close(file_fd);
+                lseek(archiveFile, paddedSize - totalBytesRead, SEEK_CUR);
+                break;
+            }
+            totalBytesRead += chunkSize;
+        }
+
+        close(file_fd);
+
+        // Skip any remaining padding bytes
+        if (lseek(archiveFile, paddedSize - totalBytesRead, SEEK_CUR) < 0) {
+            perror("Error: Failed to seek past file data");
+            close(archiveFile);
+            return -1;
+        }
+    }
+
+    close(archiveFile);
     return 0;
-  }
+}
