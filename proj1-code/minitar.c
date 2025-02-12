@@ -222,7 +222,7 @@ int create_archive(const char *archive_name, const file_list_t *files) {
   int append_files_to_archive(const char *archive_name,
                               const file_list_t *files) {
     // Open arcieve in read/write mode
-    FILE *archiveFile = fopen(archive_name, "r+b");
+    FILE *archiveFile = fopen(archive_name, "rb+");
     if (!archiveFile) {
         perror("Error: Unable to open archive file");
         return -1;
@@ -324,11 +324,11 @@ int create_archive(const char *archive_name, const file_list_t *files) {
     }
 
     // Trim excess trailing bytes
-    if (remove_trailing_bytes(archive_name, NUM_TRAILING_BLOCKS * BLOCK_SIZE) != 0) {
-        perror("Error: Failed to remove trailing bytes");
-        fclose(archiveFile);
-        return -1;
-    }
+    // if (remove_trailing_bytes(archive_name, NUM_TRAILING_BLOCKS * BLOCK_SIZE) != 0) {
+    //     perror("Error: Failed to remove trailing bytes");
+    //     fclose(archiveFile);
+    //     return -1;
+    // }
 
     fclose(archiveFile);
     return 0;
