@@ -4,6 +4,9 @@
 #include "file_list.h"
 #include "minitar.h"
 
+// Adding the functions made so they can run in the main function
+int update_files_in_archive(const char *archive_name, const file_list_t *file);
+
 int main(int argc, char **argv) {
     if (argc < 4) {
         printf("Usage: %s -c|a|t|u|x -f ARCHIVE [FILE...]\n", argv[0]);
@@ -62,6 +65,16 @@ int main(int argc, char **argv) {
             break;
         case 3:
             result = get_archive_file_list(archive_name, &files);
+            if (result == 0) {
+                node_t *current = files.head;
+                while (current != NULL) {
+                    printf("%s\n", current->name);
+                    current = current->next;
+                }
+            }
+            break;
+        case 4:
+            result = update_files_in_archive(archive_name, &files);
             break;
         case 5:
             result = extract_files_from_archive(archive_name);
@@ -74,11 +87,52 @@ int main(int argc, char **argv) {
 
     // If the operation failed, report an error
     if (result != 0) {
-        fprintf(stderr, "Error: Archive creation failed.\n");
         file_list_clear(&files);
         return 1;
     }
 
     file_list_clear(&files);
+    return 0;
+}
+
+
+/*
+ * Updates an archive file using archive_name and a new list of files to possibly be updated
+ *
+ * Returns 0 upon success, and -1 upon error
+ *
+ * Creates a new file list and obtains the current list in the archive file
+ *
+ * The compares the two files list using file_list_is_subset, then uses the append method to attach the files if valid
+ */
+int update_files_in_archive(const char *archive_name, const file_list_t *files) {
+    // Initialize a new linked list of files that will be extracted by the archive list function
+    file_list_t archive_files;
+    file_list_init(&archive_files);
+
+    // Getting the linked list of files from the current acrhive
+    int result = get_archive_file_list(archive_name, &archive_files);
+    if (result != 0) {
+        perror("Error: Failed to obtain archive list");
+        file_list_clear(&archive_files);
+        return -1;
+    }
+
+    // Checking to see if the files being appended is a subset of the archive files present
+    if(!file_list_is_subset(files, &archive_files)) {
+        fprintf(stderr, "Error: One or more of the specified files is not already present in archive\n");
+        file_list_clear(&archive_files);
+        return -1;
+    }
+
+    // Appends new versions of the files to the archive, ensuring they are written in chunks
+    result = append_files_to_archive(archive_name, files);
+    if (result != 0) {
+        perror("Error: Failed to update archive file");
+        file_list_clear(&archive_files);
+        return -1;
+    }
+
+    file_list_clear(&archive_files);
     return 0;
 }

@@ -148,8 +148,8 @@ int remove_trailing_bytes(const char *file_name, size_t nbytes) {
  */
 int create_archive(const char *archive_name, const file_list_t *files) {
   // Creating and Opening the Archive file
-  int archive_file = open(archive_name, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-  if (archive_file < 0) {
+  FILE *archive_file = fopen(archive_name, "wb");
+  if (!archive_file) {
     perror("Error: Unable to open archive file");
     return -1;
   }
@@ -161,68 +161,61 @@ int create_archive(const char *archive_name, const file_list_t *files) {
     tar_header header;
     if (fill_tar_header(&header, current->name) != 0) {
       perror("Error: Failed to fill tar header");
-      close(archive_file);
+      fclose(archive_file);
       return -1;
     }
 
     // Write the header to the archive file
-    if (write(archive_file, &header, sizeof(tar_header)) !=
+    if (fwrite(&header, 1, sizeof(tar_header), archive_file) !=
         sizeof(tar_header)) {
       perror("Error: Failed to write header to archive");
-      close(archive_file);
+      fclose(archive_file);
       return -1;
     }
 
     // Open the contents of the file after header creation
-    int file_fd = open(current->name, O_RDONLY);
-    if (file_fd < 0) {
+    FILE *file_fd = fopen(current->name, "rb");
+    if (!file_fd) {
       perror("Error: Failed to open file");
-      close(archive_file);
+      fclose(archive_file);
       return -1;
     }
 
     // Read the contents of the file and write to the archive file
     char buffer[BLOCK_SIZE] = {0};
     ssize_t bytes_read;
-    while ((bytes_read = read(file_fd, buffer, BLOCK_SIZE)) > 0) {
-      if (write(archive_file, buffer, BLOCK_SIZE) != BLOCK_SIZE) {
+    while ((bytes_read = fread(buffer, 1, BLOCK_SIZE, file_fd)) > 0) {
+      if (fwrite(buffer, 1, BLOCK_SIZE, archive_file) != BLOCK_SIZE) {
         perror("Error: Failed to write file contents to archive");
-        close(file_fd);
-        close(archive_file);
+        fclose(file_fd);
+        fclose(archive_file);
         return -1;
       }
       memset(buffer, 0, BLOCK_SIZE);
     }
 
-    if (bytes_read < 0) {
+    if (ferror(file_fd)) {
       perror("Error: Failed to read file");
-      close(file_fd);
-      close(archive_file);
+      fclose(file_fd);
+      fclose(archive_file);
       return -1;
     }
 
-    close(file_fd);
+    fclose(file_fd);
     current = current->next;
   }
 
   // Write trailing blocks to mark end of archive
     char empty_block[BLOCK_SIZE] = {0};
     for (int i = 0; i < NUM_TRAILING_BLOCKS; i++) {
-      if (write(archive_file, empty_block, BLOCK_SIZE) != BLOCK_SIZE) {
+      if (fwrite(empty_block, 1, BLOCK_SIZE, archive_file) != BLOCK_SIZE) {
         perror("Error: Failed to write trailing blocks");
-        close(archive_file);
+        fclose(archive_file);
         return -1;
       }
     }
 
-    // Removing any unneccessary trailing bytes if possible
-    if (remove_trailing_bytes(archive_name, NUM_TRAILING_BLOCKS * BLOCK_SIZE) != 0) {
-      perror("Error: Failed to remove trailing bytes");
-      close(archive_file);
-      return -1;
-    }
-
-    close(archive_file);
+    fclose(archive_file);
     return 0;
   }
 
@@ -344,12 +337,17 @@ int create_archive(const char *archive_name, const file_list_t *files) {
   /*
    * Reads an archive file and extracts the list of contained file names
    *
-   * STILL WORKING ON RIGHT NOW - Mikey Fera
+   * Returns 0 for success, -1 for error
+   *
+   * Opens the file an extracts the tar header and reads the name of the header to the terminal
+   * Then need to find the next header by calculating block sizes and finding the right number for the next header
+   * and repeat the process
+   *
    */
   int get_archive_file_list(const char *archive_name, file_list_t *files) {
-    int archive_file = open(archive_name, O_RDONLY);
+    FILE *archive_file = fopen(archive_name, "rb");
 
-    if (archive_file < 0) {
+    if (!archive_file) {
       perror("Error: Unable to open archive file");
       return -1;
     }
@@ -358,37 +356,43 @@ int create_archive(const char *archive_name, const file_list_t *files) {
       tar_header header;
       ssize_t bytes_read;
 
-      if ((bytes_read = read(archive_file, &header, sizeof(tar_header))) < 0) {
+      if ((bytes_read = fread(&header, 1, sizeof(tar_header), archive_file)) < sizeof(tar_header)) {
+        if (feof(archive_file)) {
+          break;
+        }
         perror("Error: Failed to read header block");
-        close(archive_file);
+        fclose(archive_file);
         return -1;
       }
-      if (bytes_read == 0 || header.name[0] == '\0') {
+      
+      if (header.name[0] == '\0') {
         break;
       }
 
-      printf("%s\n", header.name);
-
       if (file_list_add(files, header.name) != 0) {
         perror("Error: Failed to add file to list");
-        close(archive_file);
+        fclose(archive_file);
         return -1;
       }
 
-      // GONNA CHNAGE THIS PART -> finding a different way to calculate each file
+      // finding the next header block to get file information
       off_t file_size = strtol(header.size, NULL, 8);
       off_t padded_size = ((file_size + BLOCK_SIZE -1) / BLOCK_SIZE) * BLOCK_SIZE;
-      if (lseek(archive_file, padded_size, SEEK_CUR) < 0) {
-        perror("error: Failed to seek to next header");
-        close(archive_file);
+
+      if (fseek(archive_file, padded_size, SEEK_CUR) != 0) {
+        perror("Error: Failed to seek to next header");
+        fclose(archive_file);
         return -1;
       }
     }
 
-    // close(archive_file);
+    fclose(archive_file);
     return 0;
   }
 
+  /*
+   *
+   */
   int extract_files_from_archive(const char *archive_name) {
     // Open archive in read mode
     int archiveFile = open(archive_name, O_RDONLY);
