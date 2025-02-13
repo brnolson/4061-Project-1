@@ -147,6 +147,13 @@ int remove_trailing_bytes(const char *file_name, size_t nbytes) {
  * Then loops again to make the footer blocks by adding empty blocks at the end of the entire archive file
  */
 int create_archive(const char *archive_name, const file_list_t *files) {
+  // Remove trailing bytes if the archive already exists
+  if (access(archive_name, F_OK) == 0) {
+    if (remove_trailing_bytes(archive_name, NUM_TRAILING_BLOCKS * BLOCK_SIZE) != 0) {
+      perror("Error: Failed to remove old footer");
+      return -1;
+    }
+  }
   // Creating and Opening the Archive file
   FILE *archive_file = fopen(archive_name, "wb");
   if (!archive_file) {
