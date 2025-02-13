@@ -345,13 +345,14 @@ int create_archive(const char *archive_name, const file_list_t *files) {
    *
    */
   int get_archive_file_list(const char *archive_name, file_list_t *files) {
+    // Opens the archive file in read mode
     FILE *archive_file = fopen(archive_name, "rb");
-
     if (!archive_file) {
       perror("Error: Unable to open archive file");
       return -1;
     }
 
+    // Reads each header and obtains the name of each and adds it to the file list of files
     while (1) {
       tar_header header;
       ssize_t bytes_read;
@@ -364,11 +365,12 @@ int create_archive(const char *archive_name, const file_list_t *files) {
         fclose(archive_file);
         return -1;
       }
-      
+
       if (header.name[0] == '\0') {
         break;
       }
 
+      // Adds header name to the file list as that is the name of the file
       if (file_list_add(files, header.name) != 0) {
         perror("Error: Failed to add file to list");
         fclose(archive_file);
@@ -376,9 +378,17 @@ int create_archive(const char *archive_name, const file_list_t *files) {
       }
 
       // finding the next header block to get file information
-      off_t file_size = strtol(header.size, NULL, 8);
-      off_t padded_size = ((file_size + BLOCK_SIZE -1) / BLOCK_SIZE) * BLOCK_SIZE;
+      // By using sscanf to convert the string to an int then use a formula to calculate the next header block
+      unsigned int file_size = 0;
+      if (sscanf(header.size, "%o", &file_size) != 1) {
+        perror("Error: Failed to parse file size from header");
+        fclose(archive_file);
+        return -1;
+      }
 
+      unsigned int padded_size = ((file_size + BLOCK_SIZE -1) / BLOCK_SIZE) * BLOCK_SIZE;
+
+      // Uses fseek to go directly to the next header block
       if (fseek(archive_file, padded_size, SEEK_CUR) != 0) {
         perror("Error: Failed to seek to next header");
         fclose(archive_file);

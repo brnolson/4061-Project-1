@@ -3,8 +3,9 @@
 
 #include "file_list.h"
 #include "minitar.h"
+#include <unistd.h>
 
-// Adding the functions made so they can run in the main function
+// Adding function header for the update function
 int update_files_in_archive(const char *archive_name, const file_list_t *file);
 
 int main(int argc, char **argv) {
@@ -13,11 +14,9 @@ int main(int argc, char **argv) {
         return 0;
     }
 
+    // Initializing the linked list for files
     file_list_t files;
     file_list_init(&files);
-
-    // TODO: Parse command-line arguments and invoke functions from 'minitar.h'
-    // to execute archive operations
 
     const char *archive_name = NULL;
     int operation = 0;
@@ -49,7 +48,7 @@ int main(int argc, char **argv) {
 
     // If no real operation was used or archive_name does not exist, report an error
     if (operation == 0 || archive_name == NULL) {
-        printf("Error: INvalid operation or missing archive name.\n");
+        printf("Error: Invalid operation or missing archive name.\n");
         file_list_clear(&files);
         return 1;
     }
@@ -106,6 +105,11 @@ int main(int argc, char **argv) {
  * The compares the two files list using file_list_is_subset, then uses the append method to attach the files if valid
  */
 int update_files_in_archive(const char *archive_name, const file_list_t *files) {
+    if (access(archive_name, F_OK) == -1) {
+        perror("Error: Archive file does not exist");
+        return -1;
+    }
+
     // Initialize a new linked list of files that will be extracted by the archive list function
     file_list_t archive_files;
     file_list_init(&archive_files);
