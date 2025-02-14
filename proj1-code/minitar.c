@@ -147,13 +147,6 @@ int remove_trailing_bytes(const char *file_name, size_t nbytes) {
  * Then loops again to make the footer blocks by adding empty blocks at the end of the entire archive file
  */
 int create_archive(const char *archive_name, const file_list_t *files) {
-  // Remove trailing bytes if the archive already exists
-  if (access(archive_name, F_OK) == 0) {
-    if (remove_trailing_bytes(archive_name, NUM_TRAILING_BLOCKS * BLOCK_SIZE) != 0) {
-      perror("Error: Failed to remove old footer");
-      return -1;
-    }
-  }
   // Creating and Opening the Archive file
   FILE *archive_file = fopen(archive_name, "wb");
   if (!archive_file) {
@@ -201,6 +194,7 @@ int create_archive(const char *archive_name, const file_list_t *files) {
       memset(buffer, 0, BLOCK_SIZE);
     }
 
+    // Produce an error if it could not read the file
     if (ferror(file_fd)) {
       perror("Error: Failed to read file");
       fclose(file_fd);
@@ -251,7 +245,7 @@ int create_archive(const char *archive_name, const file_list_t *files) {
         tar_header header;
         ssize_t bytesRead = fread(&header, 1, sizeof(tar_header), archiveFile);
 
-        if (bytesRead < 0) {
+        if (bytesRead != sizeof(tar_header)) {
             perror("Error: Failed to read header block");
             fclose(archiveFile);
             return -1;
@@ -261,8 +255,14 @@ int create_archive(const char *archive_name, const file_list_t *files) {
         }
 
         // Calculate padded file size
-        off_t fileSize = strtol(header.size, NULL, 8);
-        off_t paddedSize = ((fileSize + BLOCK_SIZE - 1) / BLOCK_SIZE) * BLOCK_SIZE;
+        unsigned int file_size = 0;
+        if (sscanf(header.size, "%o", &file_size) != 1) {
+          perror("Error: Failed to parse file size from header");
+          fclose(archiveFile);
+          return -1;
+        }
+
+        unsigned int paddedSize = ((file_size + BLOCK_SIZE -1) / BLOCK_SIZE) * BLOCK_SIZE;
 
         // Skip past file data
         if (fseek(archiveFile, paddedSize, SEEK_CUR) < 0) {
@@ -277,6 +277,13 @@ int create_archive(const char *archive_name, const file_list_t *files) {
     // Seek to the position where new files will be appended
     if (fseek(archiveFile, appendPointer, SEEK_SET) < 0) {
         perror("Error: Failed to seek to append position");
+        fclose(archiveFile);
+        return -1;
+    }
+
+    // Trim excess trailing bytes before appending new files
+    if (remove_trailing_bytes(archive_name, NUM_TRAILING_BLOCKS * BLOCK_SIZE) != 0) {
+        perror("Error: Failed to remove trailing bytes");
         fclose(archiveFile);
         return -1;
     }
@@ -340,13 +347,6 @@ int create_archive(const char *archive_name, const file_list_t *files) {
         }
     }
 
-    // Trim excess trailing bytes
-    // if (remove_trailing_bytes(archive_name, NUM_TRAILING_BLOCKS * BLOCK_SIZE) != 0) {
-    //     perror("Error: Failed to remove trailing bytes");
-    //     fclose(archiveFile);
-    //     return -1;
-    // }
-
     fclose(archiveFile);
     return 0;
   }
@@ -374,7 +374,7 @@ int create_archive(const char *archive_name, const file_list_t *files) {
       tar_header header;
       ssize_t bytes_read;
 
-      if ((bytes_read = fread(&header, 1, sizeof(tar_header), archive_file)) < sizeof(tar_header)) {
+      if ((bytes_read = fread(&header, 1, sizeof(tar_header), archive_file)) != sizeof(tar_header)) {
         if (feof(archive_file)) {
           break;
         }
@@ -452,13 +452,23 @@ int create_archive(const char *archive_name, const file_list_t *files) {
         }
 
         // Calculate padded file size
-        off_t fileSize = strtol(header.size, NULL, 8);
-        off_t paddedSize = ((fileSize + BLOCK_SIZE - 1) / BLOCK_SIZE) * BLOCK_SIZE;
+        unsigned int fileSize = 0;
+        if (sscanf(header.size, "%o", &fileSize) != 1) {
+          perror("Error: Failed to parse file size from header");
+          fclose(archiveFile);
+          return -1;
+        }
+
+        unsigned int paddedSize = ((fileSize + BLOCK_SIZE -1) / BLOCK_SIZE) * BLOCK_SIZE;
 
         // Ensure valid file name
         if (strchr(header.name, '/') != NULL) {
             fprintf(stderr, "Error: Extraction of file with path not allowed: %s\n", header.name);
-            fseek(archiveFile, paddedSize, SEEK_CUR);
+            if (fseek(archiveFile, paddedSize, SEEK_CUR) != 0) {
+                fprintf(stderr, "Error: Failed to seek past skipped file '%s'\n", header.name);
+                fclose(archiveFile);
+                return -1;
+            }
             continue;
         }
 
@@ -466,12 +476,16 @@ int create_archive(const char *archive_name, const file_list_t *files) {
         FILE *file_fd = fopen(header.name, "wb");
         if (!file_fd) {
             perror("Error: Failed to create extracted file");
-            fseek(archiveFile, paddedSize, SEEK_CUR);
+            if (fseek(archiveFile, paddedSize, SEEK_CUR) != 0) {
+                fprintf(stderr, "Error: Failed to seek past file '%s'\n", header.name);
+                fclose(archiveFile);
+                return -1;
+            }
             continue;
         }
 
         // Read file content and write it to the extracted file
-        char buffer[BLOCK_SIZE];
+        char buffer[BLOCK_SIZE] = {0};
         ssize_t totalBytesRead = 0;
         while (totalBytesRead < fileSize) {
             ssize_t chunkSize = fread(buffer, 1, BLOCK_SIZE, archiveFile);
@@ -485,7 +499,11 @@ int create_archive(const char *archive_name, const file_list_t *files) {
             if (fwrite(buffer, 1, bytesToWrite, file_fd) != bytesToWrite) {
                 perror("Error: Failed to write extracted file");
                 fclose(file_fd);
-                fseek(archiveFile, paddedSize - totalBytesRead, SEEK_CUR);
+                 if (fseek(archiveFile, paddedSize - totalBytesRead, SEEK_CUR) != 0) {
+                    fprintf(stderr, "Error: Failed to seek past file '%s'\n", header.name);
+                    fclose(archiveFile);
+                    return -1;
+                }
                 break;
             }
             totalBytesRead += chunkSize;
